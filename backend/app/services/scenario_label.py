@@ -17,6 +17,26 @@ class ScenarioLabelService(BaseModuleService):
     ACTION_RULES = {"提交校验": "待校验", "标记生效": "已生效", "标记废弃": "已废弃"}
     NEGATIVE_ACTIONS = []
 
+    # ── 链路4: 洞察投影 → 场景标注（来源追溯） ──
+    def describe_label_source(self, label_id: int) -> dict[str, Any]:
+        """查询场景标注的来源明细，区分来自模型采集还是预测任务。"""
+        label = store.find(self.MODULE, label_id)
+        if label is None:
+            return {"ok": False}
+        source_type = label.get("来源类型")
+        return {
+            "ok": True,
+            "label_id": label_id,
+            "场景名称": label.get("场景名称"),
+            "来源类型": source_type,
+            "来源编号": label.get("来源编号"),
+            "来源名称": label.get("来源名称", label.get("场景名称")),
+            "结果ID": label.get("结果ID"),
+            "关联特征": label.get("关联特征", ""),
+            "业务规则": label.get("业务规则", ""),
+            "由洞察投影生成": source_type is not None,
+        }
+
     # ── 链路6: 聚类配置 → 分群 → 场景标注 ──
     def validate_label_rules(self, label_id: int) -> dict[str, Any]:
         """校验场景标注的业务规则合法性，检查关联特征是否存在且可查询。"""

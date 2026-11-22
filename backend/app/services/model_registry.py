@@ -4,6 +4,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.base import BaseModuleService
+from app.services.insight import (
+    SOURCE_MODEL,
+    InsightWriteError,
+    assemble_model_insight,
+    insight_writer,
+)
 from app.store import store
 
 
@@ -45,27 +51,28 @@ class ModelRegistryService(BaseModuleService):
         return {"ok": True, "model_id": model_id, "predict_task_id": next_id, "score": model.get("评估分数")}
 
     def collect_predict_results_to_mining(self, model_id: int) -> dict[str, Any]:
-        """采集批量预测结果并导入挖掘结果模块，生成洞察摘要和关键分群。"""
+        """采集批量预测结果并导入挖掘结果模块，生成洞察摘要和关键分群。
+
+        与批量预测执行共用同一套洞察装配与写入层；结果编号在提交时统一分配。
+        """
         model = store.find(self.MODULE, model_id)
         if model is None:
-            return {"ok": False}
-        mining_rows = store.rows("mining_result")
-        next_id = max((int(r.get("id", 0)) for r in mining_rows), default=0) + 1
-        mining_rows.append({
-            "id": next_id,
-            "status": "草稿",
-            "pending": True,
-            "abnormal": False,
-            "结果编号": f"RES-{next_id:04d}",
-            "分析主题": f"模型{model_id}预测结果挖掘分析",
-            "算法类型": model.get("算法类型", "unknown"),
-            "洞察摘要": f"基于模型{model_id}的批量预测发现了3个高价值用户分群，置信度0.85",
-            "关键分群": "高价值_群1,活跃_群2,流失风险_群3",
-            "置信度": "0.85",
-            "结果文件": f"mining/model_{model_id}_results.json",
-            "结果版本": "v1.0.0",
-        })
-        return {"ok": True, "model_id": model_id, "mining_id": next_id}
+            return {"ok": False, "message": f"模型 {model_id} 不存在"}
+        draft = assemble_model_insight(model_id, model)
+        try:
+            result = insight_writer.commit(draft)
+        except InsightWriteError as exc:
+            return {"ok": False, "model_id": model_id, "retryable": True,
+                    "message": f"模型洞察落库失败，可重试：{exc}"}
+        return {
+            "ok": True,
+            "model_id": model_id,
+            "mining_id": result["id"],
+            "result_id": result["id"],
+            "source_type": SOURCE_MODEL,
+            "source_id": model_id,
+            "result": result,
+        }
 
     def validate_model_quality(self, model_id: int) -> dict[str, Any]:
         """校验模型的评估分数和特征完整性，确定是否达到注册标准。"""
